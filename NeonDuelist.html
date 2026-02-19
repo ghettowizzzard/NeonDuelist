@@ -3392,6 +3392,35 @@ function resetGame() {
             setTimeout(() => _startPvpDuel(iGoFirst), 1000);
         }
 
+        // ── PvP STATE SYNC ───────────────────────────────────────────────────────────
+        function _pvpSerializeSide(side) {
+            return {
+                lp: side.lp,
+                hand: [...side.hand],
+                monsterZones: side.monsterZones.map(z => z ? { ...z } : null),
+                spellTrapZones: side.spellTrapZones.map(z => z ? { ...z } : null),
+                graveyard: [...side.graveyard],
+                banished: [...side.banished],
+                normalSummonUsed: side.normalSummonUsed,
+            };
+        }
+
+        function _pvpEmitStateSync() {
+            if (!mpState.inPvP || !socket || !duelState) return;
+            socket.emit('pvpAction', {
+                type: 'stateSync',
+                myPlayer:         _pvpSerializeSide(duelState.player),
+                myAi:             _pvpSerializeSide(duelState.ai),
+                phase:            duelState.phase,
+                turnPlayer:       duelState.turnPlayer,
+                turnCount:        duelState.turnCount,
+                alreadyAttacked:  [...duelState.alreadyAttacked],
+                aiAlreadyAttacked:[...duelState.aiAlreadyAttacked],
+                log:              duelState.log.slice(0, 15),
+            });
+        }
+        // ─────────────────────────────────────────────────────────────────────────────
+
         // ── PvP ENGINE ───────────────────────────────────────────────────────────────
         function _startPvpDuel(playerFirst) {
             socket.emit('pvpAction', { type: 'shareDeck', deck: [...gameState.mainDeck], extraDeck: [...gameState.extraDeck] });
@@ -3421,9 +3450,44 @@ function resetGame() {
         }
 
         function _applyPvpAction(action) {
-            if (!duelState || !mpState.inPvP) return;
+            if (!mpState.inPvP) return;
             const { type } = action;
             if (type === 'shareDeck') { mpState.oppDeck = action.deck||[]; mpState.oppExtraDeck = action.extraDeck||[]; return; }
+            if (type === 'stateSync') {
+                if (!duelState) return;
+                // Sender's "player" side = our "ai" side (and vice versa)
+                const p = action.myPlayer, a = action.myAi;
+                duelState.ai.lp              = p.lp;
+                duelState.ai.hand            = p.hand;
+                duelState.ai.monsterZones    = p.monsterZones;
+                duelState.ai.spellTrapZones  = p.spellTrapZones;
+                duelState.ai.graveyard       = p.graveyard;
+                duelState.ai.banished        = p.banished;
+                duelState.ai.normalSummonUsed= p.normalSummonUsed;
+                duelState.player.lp              = a.lp;
+                duelState.player.hand            = a.hand;
+                duelState.player.monsterZones    = a.monsterZones;
+                duelState.player.spellTrapZones  = a.spellTrapZones;
+                duelState.player.graveyard       = a.graveyard;
+                duelState.player.banished        = a.banished;
+                duelState.player.normalSummonUsed= a.normalSummonUsed;
+                // Flip turn perspective: sender's PLAYER turn = our AI turn
+                duelState.phase     = action.phase;
+                duelState.turnPlayer= action.turnPlayer === 'PLAYER' ? 'AI' : 'PLAYER';
+                duelState.turnCount = action.turnCount;
+                // Flip attacked arrays: sender's alreadyAttacked = their player's = our ai's
+                duelState.aiAlreadyAttacked = action.alreadyAttacked;
+                duelState.alreadyAttacked   = action.aiAlreadyAttacked;
+                // Merge new log entries (avoid duplicates)
+                if (action.log && action.log.length) {
+                    const existing = new Set(duelState.log);
+                    const newEntries = action.log.filter(e => !existing.has(e));
+                    if (newEntries.length) duelState.log = [...newEntries, ...duelState.log].slice(0, 40);
+                }
+                renderDuelField();
+                return;
+            }
+            if (!duelState) return;
             if (type === 'summon') {
                 const { handCardId, zoneIndex, position } = action;
                 duelState.ai.monsterZones[zoneIndex] = { id:handCardId, position, summonedThisTurn:true, faceDown:position==='DEF' };
@@ -6356,7 +6420,11 @@ function resetGame() {
             duelState.selectedHandCard=null; duelState.selectedZone=null;
             logDuel("Your turn ends. Opponent's turn begins.");
             renderDuelField();
-            if (mpState.inPvP && socket) { socket.emit('pvpAction', { type: 'endTurn' }); return; }
+            if (mpState.inPvP && socket) {
+                _pvpEmitStateSync(); // sync full board state before handing turn over
+                setTimeout(() => socket.emit('pvpAction', { type: 'endTurn' }), 80);
+                return;
+            }
             setTimeout(doAITurn, 900);
         }
 
@@ -7005,7 +7073,10 @@ function resetGame() {
             duelState.selectedHandCard=null;
             SoundEngine.summon();
             logDuel(`You summon ${getCardById(handCardId).name} in ${position}${position==='DEF'?' (face-down)':''} position!`);
-            if (mpState.inPvP && socket) socket.emit('pvpAction', { type:'summon', handCardId, zoneIndex:zi, position });
+            if (mpState.inPvP && socket) {
+                socket.emit('pvpAction', { type:'summon', handCardId, zoneIndex:zi, position });
+                setTimeout(_pvpEmitStateSync, 120); // delay so summon effects run first
+            }
             triggerOnSummonEffect(handCardId,'player',zi);
             renderDuelField();
         }
@@ -7046,7 +7117,10 @@ function resetGame() {
             const hi=duelState.player.hand.indexOf(handCardId);
             if (hi!==-1) duelState.player.hand.splice(hi,1);
             duelState.selectedHandCard=null;
-            if (mpState.inPvP && socket) socket.emit('pvpAction', { type:'setSpellTrap', handCardId, zoneIndex, isTrap });
+            if (mpState.inPvP && socket) {
+                socket.emit('pvpAction', { type:'setSpellTrap', handCardId, zoneIndex, isTrap });
+                setTimeout(_pvpEmitStateSync, 800); // delay so spell effects fully resolve first
+            }
             if (isTrap) {
                 duelState.player.spellTrapZones[zoneIndex]={id:handCardId,faceDown:true,activatedThisTurn:false};
                 logDuel('You set a Trap face-down.');
@@ -7328,7 +7402,10 @@ function resetGame() {
             if (!duelState.selectedZone) return;
             const attackerIdx=duelState.selectedZone.idx;
             duelState.selectedZone=null;
-            if (mpState.inPvP && socket) socket.emit('pvpAction', { type:'attack', attackerIdx, targetIdx });
+            if (mpState.inPvP && socket) {
+                socket.emit('pvpAction', { type:'attack', attackerIdx, targetIdx });
+                setTimeout(_pvpEmitStateSync, 120);
+            }
             resolveAttack('player',attackerIdx,'ai',targetIdx);
             renderDuelField();
         }
@@ -7336,7 +7413,10 @@ function resetGame() {
         function duelDirectAttack() {
             if (!duelState.selectedZone) return;
             const attackerIdx=duelState.selectedZone.idx;
-            if (mpState.inPvP && socket) socket.emit('pvpAction', { type:'directAttack', attackerIdx });
+            if (mpState.inPvP && socket) {
+                socket.emit('pvpAction', { type:'directAttack', attackerIdx });
+                setTimeout(_pvpEmitStateSync, 120);
+            }
             const attSlot=duelState.player.monsterZones[attackerIdx];
             const attCard=getCardById(attSlot.id);
             const attATK=getEffectiveATK(attSlot);
