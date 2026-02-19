@@ -2581,17 +2581,17 @@ const CARD_DB = [
         // ── PLAYER ICONS ─────────────────────────────────────
         const PLAYER_ICONS = [
             { id:'icon_lightning', emoji:'⚡', name:'Lightning',   cost:0,   desc:'The shock that started it all.' },
-            { id:'icon_sword',     emoji:'⚔️', name:'Duelist',     cost:250, desc:'Born to battle. Nothing more.' },
-            { id:'icon_fire',      emoji:'🔥', name:'Blaze',       cost:300, desc:'Burn everything in your path.' },
-            { id:'icon_wolf',      emoji:'🐺', name:'Pack Leader', cost:380, desc:'Hunt alone. Rule the field.' },
-            { id:'icon_skull',     emoji:'💀', name:'Reaper',      cost:400, desc:'Feared on every duel floor.' },
-            { id:'icon_moon',      emoji:'🌙', name:'Shadow Moon', cost:450, desc:'Strikes when no one is watching.' },
-            { id:'icon_robot',     emoji:'🤖', name:'Cyber Core',  cost:550, desc:'Cold logic. Total efficiency.' },
-            { id:'icon_eye',       emoji:'👁️', name:'All-Seeing',  cost:600, desc:'Nothing escapes your gaze.' },
-            { id:'icon_gem',       emoji:'💎', name:'Diamond',     cost:700, desc:'Refined. Unbreakable. Rare.' },
-            { id:'icon_crown',     emoji:'👑', name:'Champion',    cost:800, desc:'Only for those who have earned it.' },
-            { id:'icon_dragon',    emoji:'🐉', name:'Dragon King', cost:950, desc:'Ancient power. Commands respect.' },
-            { id:'icon_star',      emoji:'🌟', name:'Legend',      cost:1200,desc:'Your name will be remembered.' },
+            { id:'icon_sword',     emoji:'⚔️', name:'Duelist',     cost:50,  desc:'Born to battle. Nothing more.' },
+            { id:'icon_fire',      emoji:'🔥', name:'Blaze',       cost:75,  desc:'Burn everything in your path.' },
+            { id:'icon_wolf',      emoji:'🐺', name:'Pack Leader', cost:75,  desc:'Hunt alone. Rule the field.' },
+            { id:'icon_skull',     emoji:'💀', name:'Reaper',      cost:100, desc:'Feared on every duel floor.' },
+            { id:'icon_moon',      emoji:'🌙', name:'Shadow Moon', cost:100, desc:'Strikes when no one is watching.' },
+            { id:'icon_robot',     emoji:'🤖', name:'Cyber Core',  cost:125, desc:'Cold logic. Total efficiency.' },
+            { id:'icon_eye',       emoji:'👁️', name:'All-Seeing',  cost:150, desc:'Nothing escapes your gaze.' },
+            { id:'icon_gem',       emoji:'💎', name:'Diamond',     cost:175, desc:'Refined. Unbreakable. Rare.' },
+            { id:'icon_crown',     emoji:'👑', name:'Champion',    cost:200, desc:'Only for those who have earned it.' },
+            { id:'icon_dragon',    emoji:'🐉', name:'Dragon King', cost:225, desc:'Ancient power. Commands respect.' },
+            { id:'icon_star',      emoji:'🌟', name:'Legend',      cost:250, desc:'Your name will be remembered.' },
         ];
 
         // ── STRUCTURE DECKS ───────────────────────────────────
@@ -3193,7 +3193,7 @@ function resetGame() {
             oppId: null, oppName: '', oppSymbol: '⚡', oppLevel: 1,
             oppDeck: [], oppExtraDeck: [],
             rpsMe: null, rpsOpp: null, rpsRound: 1, rpsScore: { me: 0, opp: 0 },
-            onlinePlayers: [], reqPending: false, pendingAttack: null,
+            onlinePlayers: [], reqPending: false, pendingAttack: null, pvpEnding: false,
             oppSleeve: null, oppPlaymat: null,
         };
 
@@ -3629,9 +3629,12 @@ function resetGame() {
 
         function _handlePvpEnd(data) {
             if (!mpState.inPvP) return;
+            mpState.pvpEnding = true;  // block spurious deck-out from firing first
             mpState.inPvP = false;
             if (socket) socket.emit('setBattle', false);
-            if (data.won) endDuel('player','pvp'); else endDuel('ai','pvp');
+            const reason = data.reason || 'pvp';
+            if (data.won) endDuel('player', reason); else endDuel('ai', reason);
+            mpState.pvpEnding = false;
         }
         // ─────────────────────────────────────────────────────────────────────────────
 
@@ -6426,7 +6429,7 @@ function resetGame() {
         // ── DRAW ─────────────────────────────────────────────
         function duelDraw(owner) {
             const side = duelState[owner];
-            if (side.deck.length===0) { endDuel(owner==='player'?'ai':'player','deck-out'); return false; }
+            if (side.deck.length===0) { if (!mpState.pvpEnding) endDuel(owner==='player'?'ai':'player','deck-out'); return false; }
             side.hand.push(side.deck.shift());
             if (owner==='player') SoundEngine.cardDraw();
             return true;
@@ -8371,7 +8374,8 @@ function resetGame() {
             if (!preview) {
                 preview = document.createElement('div');
                 preview.id = 'card-preview-overlay';
-                preview.className = 'fixed z-[200] pointer-events-none transition-opacity duration-150';
+                preview.className = 'fixed pointer-events-none transition-opacity duration-150';
+                preview.style.zIndex = '99999';
                 document.body.appendChild(preview);
             }
             const defSlv = CARD_SLEEVES[0];
@@ -8835,7 +8839,8 @@ function resetGame() {
             if (!preview) {
                 preview = document.createElement('div');
                 preview.id = 'card-preview-overlay';
-                preview.className = 'fixed z-[200] pointer-events-none transition-opacity duration-150';
+                preview.className = 'fixed pointer-events-none transition-opacity duration-150';
+                preview.style.zIndex = '99999';
                 preview.style.filter = 'drop-shadow(0 0 20px rgba(0,229,255,0.6))';
                 document.body.appendChild(preview);
             }
@@ -8992,9 +8997,12 @@ function resetGame() {
             function sfxScratch() {
                 if (scratchBusy) return; boot(); resume(); scratchBusy = true;
                 const now = ctx.currentTime, s = ctx.createBufferSource(); s.buffer = noiseBuf();
-                const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 3200; f.Q.value = 0.9;
-                const g = ctx.createGain(); g.gain.value = 0.38;
-                s.connect(f); f.connect(g); g.connect(sfxGain); s.start(now); s.stop(now + 0.11);
+                // Low-mid bandpass + lowpass for softer paper-rustle sound
+                const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 1400; f.Q.value = 0.28;
+                const f2 = ctx.createBiquadFilter(); f2.type = 'lowpass'; f2.frequency.value = 2200;
+                const g = ctx.createGain(); g.gain.value = 0.13;
+                s.connect(f); f.connect(f2); f2.connect(g); g.connect(sfxGain);
+                s.start(now); s.stop(now + 0.16);
                 s.onended = () => { scratchBusy = false; };
             }
             function sfxScratchReveal() { [523,622,784].forEach((f,i)=>tone(f,'sine',i*0.09,0.42,0.2)); noise(0,0.22,0.28,4500); }
