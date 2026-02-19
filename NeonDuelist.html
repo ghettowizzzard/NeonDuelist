@@ -3615,6 +3615,8 @@ function resetGame() {
         function _pvpResolveAttack(opp_attackerIdx, pl_targetIdx) {
             resolveAttack('ai', opp_attackerIdx, 'player', pl_targetIdx);
             renderDuelField();
+            if (duelState && duelState.player.lp <= 0) endDuel('ai', 'lp');
+            if (duelState && duelState.ai.lp <= 0)     endDuel('player', 'lp');
         }
 
         function _pvpDirectAttack(opp_attackerIdx) {
@@ -3662,7 +3664,11 @@ function resetGame() {
             if (_nowInDuel && !gameState._mpInWorld) {
                 gameState._mpInWorld = true;
                 if (!gameState._mpPos) gameState._mpPos = { x: 10 + Math.random() * 80, y: 10 + Math.random() * 80 };
-                if (socket) socket.emit('enterWorld', gameState._mpPos);
+                if (socket) {
+                    // Re-register with fresh data so server has the current icon before broadcasting
+                    socket.emit('register', { name: gameState.duelistName || 'Unnamed Duelist', symbol: _mpResolveEmoji(gameState.equippedSymbol), level: gameState.level || 1 });
+                    socket.emit('enterWorld', gameState._mpPos);
+                }
             } else if (!_nowInDuel && gameState._mpInWorld) {
                 gameState._mpInWorld = false;
                 if (socket) socket.emit('leaveWorld');
@@ -7549,6 +7555,10 @@ function resetGame() {
         // ── WIN/LOSS ──────────────────────────────────────────
         function endDuel(winner, reason) {
             if (!duelState) return;
+            // If LP is actually 0, always use 'lp' — card-effect deck-outs can fire
+            // before the LP check runs, sending the wrong reason to the opponent.
+            if (duelState.ai.lp <= 0 && winner === 'player') reason = 'lp';
+            if (duelState.player.lp <= 0 && winner === 'ai')  reason = 'lp';
             // In PvP: tell the opponent the result before processing locally
             if (mpState.inPvP && socket) {
                 socket.emit('pvpEnd', { won: winner !== 'player', reason });
@@ -7786,7 +7796,7 @@ function resetGame() {
                 <div id="duel-field-inner" style="position:absolute;inset:0;display:flex;flex-direction:column;transform-origin:center center;transform:scale(${duelZoom}) translate(${duelPanX}px,${duelPanY}px)">
 
                     <!-- Forfeit -->
-                    <button onclick="forfeitDuel()" style="position:absolute;top:6px;left:8px;z-index:20;background:rgba(127,29,29,0.85);border:1px solid #991b1b;color:#fca5a5;font-size:10px;font-family:monospace;font-weight:bold;padding:3px 8px;border-radius:4px;cursor:pointer">⚑ Forfeit</button>
+                    <button onclick="forfeitDuel()" style="position:absolute;top:42px;left:8px;z-index:20;background:rgba(127,29,29,0.85);border:1px solid #991b1b;color:#fca5a5;font-size:10px;font-family:monospace;font-weight:bold;padding:3px 8px;border-radius:4px;cursor:pointer">⚑ Forfeit</button>
 
                     <!-- AI Info -->
                     <div style="display:flex;align-items:center;gap:10px;padding:4px 14px;background:#06111e;border-bottom:1px solid #0f3050;flex-shrink:0">
