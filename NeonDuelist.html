@@ -3289,6 +3289,7 @@ function resetGame() {
 
         function _sendReq(id) {
             if (!socket || !mpState.connected) { showToast('Not connected to server!', 'error'); return; }
+            if (gameState.mainDeck.length < 40) { showToast(`Your deck only has ${gameState.mainDeck.length} cards — need at least 40 to duel!`, 'error'); return; }
             mpState.reqPending = true;
             socket.emit('requestDuel', id);
         }
@@ -3315,6 +3316,11 @@ function resetGame() {
 
         function _respondReq(accepted) {
             _closeIncomingRequest();
+            if (accepted && gameState.mainDeck.length < 40) {
+                showToast(`Your deck only has ${gameState.mainDeck.length} cards — need at least 40! Declining.`, 'error');
+                if (socket) socket.emit('respondReq', false);
+                return;
+            }
             if (socket) socket.emit('respondReq', accepted);
             if (!accepted) showToast('Declined.', 'info');
         }
@@ -3399,7 +3405,7 @@ function resetGame() {
             duelState = {
                 phase: 'DRAW', turnPlayer: playerFirst ? 'PLAYER' : 'AI',
                 turnCount: 1, firstTurnPlayer: playerFirst ? 'PLAYER' : 'AI',
-                opponentData: { name: mpState.oppName, symbol: mpState.oppSymbol, level: mpState.oppLevel, diff: 3, pvp: true },
+                opponentData: { name: mpState.oppName, symbol: mpState.oppSymbol, level: mpState.oppLevel, diff: 3, pvp: true, reward: 150 },
                 player: { lp:4000, hand:[], deck:playerDeck, extraDeck:[...gameState.extraDeck], graveyard:[], banished:[], monsterZones:[null,null,null,null,null], spellTrapZones:[null,null,null,null,null], normalSummonUsed:false },
                 ai:     { lp:4000, hand:[], deck:aiDeck,     extraDeck:[...(mpState.oppExtraDeck.length?mpState.oppExtraDeck:gameState.extraDeck)], graveyard:[], banished:[], monsterZones:[null,null,null,null,null], spellTrapZones:[null,null,null,null,null], normalSummonUsed:false },
                 selectedHandCard:null, selectedZone:null, alreadyAttacked:[], aiAlreadyAttacked:[], log:[]
@@ -7364,6 +7370,12 @@ function resetGame() {
         // ── WIN/LOSS ──────────────────────────────────────────
         function endDuel(winner, reason) {
             if (!duelState) return;
+            // In PvP: tell the opponent the result before processing locally
+            if (mpState.inPvP && socket) {
+                socket.emit('pvpEnd', { won: winner !== 'player', reason });
+                mpState.inPvP = false;
+                socket.emit('setBattle', false);
+            }
             // Remove any floating overlays that live on document.body (not inside root)
             hideCardPreview();
             const _prev = document.getElementById('card-preview-overlay');
