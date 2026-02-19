@@ -3194,6 +3194,7 @@ function resetGame() {
             oppDeck: [], oppExtraDeck: [],
             rpsMe: null, rpsOpp: null, rpsRound: 1, rpsScore: { me: 0, opp: 0 },
             onlinePlayers: [], reqPending: false,
+            oppSleeve: null, oppPlaymat: null,
         };
 
         function _mpResolveEmoji(symbolId) {
@@ -3405,6 +3406,14 @@ function resetGame() {
             };
         }
 
+                // Debounced sync — coalesces rapid state changes into one emit
+        let _pvpSyncTimer = null;
+        function _pvpScheduleSync(delay = 350) {
+            if (!mpState.inPvP) return;
+            clearTimeout(_pvpSyncTimer);
+            _pvpSyncTimer = setTimeout(_pvpEmitStateSync, delay);
+        }
+
         function _pvpEmitStateSync() {
             if (!mpState.inPvP || !socket || !duelState) return;
             socket.emit('pvpAction', {
@@ -3423,7 +3432,13 @@ function resetGame() {
 
         // ── PvP ENGINE ───────────────────────────────────────────────────────────────
         function _startPvpDuel(playerFirst) {
-            socket.emit('pvpAction', { type: 'shareDeck', deck: [...gameState.mainDeck], extraDeck: [...gameState.extraDeck] });
+            socket.emit('pvpAction', {
+                type: 'shareDeck',
+                deck: [...gameState.mainDeck],
+                extraDeck: [...gameState.extraDeck],
+                sleeve: gameState.equippedSleeve || null,
+                playmat: gameState.equippedPlaymat || null,
+            });
             setTimeout(() => _initPvpDuel(playerFirst), 300);
         }
 
@@ -3443,6 +3458,7 @@ function resetGame() {
             socket.emit('setBattle', true);
             gameState.view = 'DUEL';
             renderApp();
+            SoundEngine.playDuelBGM();
             logDuel('⚔ PvP DUEL BEGINS! ⚔');
             logDuel(playerFirst ? 'You go first! Draw a card.' : 'Opponent goes first. Wait for their move.');
             if (playerFirst) duelDraw('player');
@@ -3452,7 +3468,13 @@ function resetGame() {
         function _applyPvpAction(action) {
             if (!mpState.inPvP) return;
             const { type } = action;
-            if (type === 'shareDeck') { mpState.oppDeck = action.deck||[]; mpState.oppExtraDeck = action.extraDeck||[]; return; }
+            if (type === 'shareDeck') {
+                mpState.oppDeck = action.deck||[];
+                mpState.oppExtraDeck = action.extraDeck||[];
+                mpState.oppSleeve = action.sleeve || null;
+                mpState.oppPlaymat = action.playmat || null;
+                return;
+            }
             if (type === 'stateSync') {
                 if (!duelState) return;
                 // Sender's "player" side = our "ai" side (and vice versa)
@@ -3514,13 +3536,14 @@ function resetGame() {
         function _pvpOpponentEndTurn() {
             if (!duelState) return;
             logDuel("Opponent's turn ends. Your turn begins!");
-            duelState.phase='DRAW'; duelState.turnPlayer='PLAYER'; duelState.turnCount++;
+            // turnCount already updated via stateSync — don't double-increment
+            duelState.phase='DRAW'; duelState.turnPlayer='PLAYER';
             duelState.alreadyAttacked=[]; duelState.aiAlreadyAttacked=[];
             duelState.ai.normalSummonUsed=false; duelState.player.normalSummonUsed=false;
             duelState.selectedHandCard=null; duelState.selectedZone=null;
-            duelDraw('player');
-            renderDuelField();
             showToast('Your turn!', 'info');
+            // handlePhaseStart runs draw animation then auto-advances to Standby
+            handlePhaseStart('DRAW', 'PLAYER');
         }
 
         function _pvpResolveAttack(opp_attackerIdx, pl_targetIdx) {
@@ -7455,6 +7478,8 @@ function resetGame() {
                 socket.emit('pvpEnd', { won: winner !== 'player', reason });
                 mpState.inPvP = false;
                 socket.emit('setBattle', false);
+                // Force re-entry into world on next renderApp so online badge refreshes correctly
+                gameState._mpInWorld = false;
             }
             // Remove any floating overlays that live on document.body (not inside root)
             hideCardPreview();
@@ -7541,20 +7566,30 @@ function resetGame() {
         // ── RENDER DUEL FIELD ─────────────────────────────────
         function renderDuelField() {
             if (!duelState) return;
+            // In PvP: after every render, debounce-sync so stat buffs always reach opponent
+            if (mpState.inPvP && duelState.turnPlayer === 'PLAYER') _pvpScheduleSync(400);
             const D=duelState, isPlayerTurn=D.turnPlayer==='PLAYER', phase=D.phase;
             const phaseColors={DRAW:'#60a5fa',STANDBY:'#facc15',MAIN1:'#4ade80',BATTLE:'#f87171',MAIN2:'#4ade80',END:'#9ca3af'};
 
             // Resolve equipped accessories — inject SVG artwork directly as HTML (same as shop preview)
             const _slv = CARD_SLEEVES.find(s=>s.id===gameState.equippedSleeve) || CARD_SLEEVES[0];
             const _mat = PLAYMATS.find(m=>m.id===gameState.equippedPlaymat) || PLAYMATS[0];
+            // In PvP, resolve opponent's accessories; fall back to defaults
+            const _oppSlv = (mpState.inPvP && mpState.oppSleeve ? CARD_SLEEVES.find(s=>s.id===mpState.oppSleeve) : null) || CARD_SLEEVES[0];
+            const _oppMat = (mpState.inPvP && mpState.oppPlaymat ? PLAYMATS.find(m=>m.id===mpState.oppPlaymat) : null) || PLAYMATS[0];
             // Scale SVGs to fill their containers via viewBox — no data URIs needed
             const _slvSVG = _slv.svgPreview.replace(/width="72" height="98"/, 'width="100%" height="100%" preserveAspectRatio="xMidYMid slice"');
             const _defSlvSVG = CARD_SLEEVES[0].svgPreview.replace(/width="72" height="98"/, 'width="100%" height="100%" preserveAspectRatio="xMidYMid slice"');
+            const _oppSlvSVG = _oppSlv.svgPreview.replace(/width="72" height="98"/, 'width="100%" height="100%" preserveAspectRatio="xMidYMid slice"');
             const _matSVG = _mat.svgPreview.replace(/width="140" height="70"/, 'width="100%" height="100%" preserveAspectRatio="xMidYMid slice"');
             const _defMatSVG = PLAYMATS[0].svgPreview.replace(/width="140" height="70"/, 'width="100%" height="100%" preserveAspectRatio="xMidYMid slice"');
+            const _oppMatSVG = _oppMat.svgPreview.replace(/width="140" height="70"/, 'width="100%" height="100%" preserveAspectRatio="xMidYMid slice"');
 
             function smallCardBack() {
-                return `<div style="width:38px;height:54px;border-radius:4px;overflow:hidden;border:1.5px solid ${CARD_SLEEVES[0].border};box-shadow:0 0 4px ${CARD_SLEEVES[0].border}44;flex-shrink:0">${_defSlvSVG}</div>`;
+                return `<div style="width:38px;height:54px;border-radius:4px;overflow:hidden;border:1.5px solid ${_slv.border};box-shadow:0 0 4px ${_slv.border}44;flex-shrink:0">${_slvSVG}</div>`;
+            }
+            function oppSmallCardBack() {
+                return `<div style="width:38px;height:54px;border-radius:4px;overflow:hidden;border:1.5px solid ${_oppSlv.border};box-shadow:0 0 4px ${_oppSlv.border}44;flex-shrink:0">${_oppSlvSVG}</div>`;
             }
             function deckZone(count, label) {
                 return `<div style="width:54px;height:76px;border-radius:5px;border:2px solid #134e4a;background:#040e18;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
@@ -7645,7 +7680,7 @@ function resetGame() {
             const aiSTRow=D.ai.spellTrapZones.map((s,i)=>stSlot(s,'ai',i)).join('');
             const plMonRow=D.player.monsterZones.map((s,i)=>monsterSlot(s,'player',i)).join('');
             const plSTRow=D.player.spellTrapZones.map((s,i)=>stSlot(s,'player',i)).join('');
-            const aiHandHTML=D.ai.hand.map(()=>smallCardBack()).join('');
+            const aiHandHTML=D.ai.hand.map(()=>oppSmallCardBack()).join('');
 
             const playerHandHTML=D.player.hand.map((id,i)=>{
                 const card=getCardById(id), styles=CARD_TYPES[card.type]||CARD_TYPES.NORMAL;
@@ -7700,8 +7735,8 @@ function resetGame() {
 
                         <!-- Center rows -->
                         <div style="display:flex;flex-direction:column;gap:4px;flex:1;align-items:center;justify-content:center">
-                            <div style="position:relative;padding:10px 52px 12px;border-radius:10px;overflow:hidden;display:flex;flex-direction:column;gap:4px;align-items:center;border:1px solid ${PLAYMATS[0].accent}44">
-                                <div style="position:absolute;inset:0;overflow:hidden;pointer-events:none;border-radius:10px">${_defMatSVG}</div>
+                            <div style="position:relative;padding:10px 52px 12px;border-radius:10px;overflow:hidden;display:flex;flex-direction:column;gap:4px;align-items:center;border:1px solid ${_oppMat.accent}44">
+                                <div style="position:absolute;inset:0;overflow:hidden;pointer-events:none;border-radius:10px">${_oppMatSVG}</div>
                                 <div style="position:absolute;inset:0;background:rgba(0,0,0,0.3);pointer-events:none;border-radius:10px"></div>
                                 <div style="display:flex;gap:4px;position:relative;z-index:1">${aiSTRow}</div>
                                 <div style="display:flex;gap:4px;position:relative;z-index:1">${aiMonRow}</div>
