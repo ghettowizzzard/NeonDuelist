@@ -3193,7 +3193,7 @@ function resetGame() {
             oppId: null, oppName: '', oppSymbol: '⚡', oppLevel: 1,
             oppDeck: [], oppExtraDeck: [],
             rpsMe: null, rpsOpp: null, rpsRound: 1, rpsScore: { me: 0, opp: 0 },
-            onlinePlayers: [], reqPending: false,
+            onlinePlayers: [], reqPending: false, pendingAttack: null,
             oppSleeve: null, oppPlaymat: null,
         };
 
@@ -3527,6 +3527,72 @@ function resetGame() {
                 else { duelState.ai.spellTrapZones[zoneIndex]={id:handCardId,faceDown:false,activatedThisTurn:true}; logDuel(`Opponent activates ${getCardById(handCardId)?.name||'a Spell'}!`); }
                 renderDuelField(); return;
             }
+            // ── PvP Chain system ───────────────────────────────────────────────────────
+            if (type === 'attackDeclare') {
+                const ctx={attackerOwner:'ai',attackerIdx:action.attackerIdx,targetIdx:action.targetIdx};
+                logDuel(`Opponent declares an attack!`);
+                askPlayerChain('ATTACK',ctx).then(pick=>{
+                    if (pick) {
+                        resolveChainPick(pick,'ATTACK',ctx,()=>{
+                            if(!socket||!duelState)return;
+                            socket.emit('pvpAction',{type:'chainResult',attackNegated:!!(ctx.attackNegated),attackerIdx:action.attackerIdx,targetIdx:action.targetIdx,isDirect:false});
+                            _pvpEmitStateSync();
+                        });
+                    } else {
+                        if(socket) socket.emit('pvpAction',{type:'chainResult',attackNegated:false,attackerIdx:action.attackerIdx,targetIdx:action.targetIdx,isDirect:false});
+                    }
+                });
+                return;
+            }
+            if (type === 'directDeclare') {
+                const ctx={attackerOwner:'ai',attackerIdx:action.attackerIdx,isDirect:true};
+                logDuel(`Opponent declares a direct attack!`);
+                askPlayerChain('ATTACK',ctx).then(pick=>{
+                    if (pick) {
+                        resolveChainPick(pick,'ATTACK',ctx,()=>{
+                            if(!socket||!duelState)return;
+                            socket.emit('pvpAction',{type:'chainResult',attackNegated:!!(ctx.attackNegated),attackerIdx:action.attackerIdx,isDirect:true});
+                            _pvpEmitStateSync();
+                        });
+                    } else {
+                        if(socket) socket.emit('pvpAction',{type:'chainResult',attackNegated:false,attackerIdx:action.attackerIdx,isDirect:true});
+                    }
+                });
+                return;
+            }
+            if (type === 'chainResult') {
+                if (!duelState) return;
+                const {attackNegated,attackerIdx,targetIdx,isDirect}=action;
+                mpState.pendingAttack=null;
+                if (attackNegated) {
+                    logDuel('Your attack was negated by opponent\'s trap!');
+                    if (!duelState.alreadyAttacked.includes(attackerIdx)) duelState.alreadyAttacked.push(attackerIdx);
+                    renderDuelField();
+                    return;
+                }
+                if (isDirect) {
+                    const attSlot=duelState.player.monsterZones[attackerIdx]; if(!attSlot)return;
+                    const attATK=getEffectiveATK(attSlot);
+                    const halveDirect=[170,176,179].includes(attSlot.id);
+                    const finalDmg=halveDirect?Math.floor(attATK/2):attATK;
+                    duelState.ai.lp=Math.max(0,duelState.ai.lp-finalDmg);
+                    duelState.alreadyAttacked.push(attackerIdx);
+                    duelState.selectedZone=null;
+                    logDuel(`${getCardById(attSlot.id)?.name||'Monster'} attacks directly! Opp takes ${finalDmg} DMG${halveDirect?' (halved)':''}! (Opp LP:${duelState.ai.lp})`);
+                    if(attSlot.id===176&&duelState.ai.hand.length){const ri=Math.floor(Math.random()*duelState.ai.hand.length);const did=duelState.ai.hand.splice(ri,1)[0];duelState.ai.graveyard.push(did);logDuel(`Static Phantom: Opp discards ${getCardById(did)?.name||'a card'}!`);}
+                    renderDuelField();
+                    setTimeout(_pvpEmitStateSync,120);
+                    if(duelState.ai.lp<=0) endDuel('player','lp');
+                } else {
+                    resolveAttack('player',attackerIdx,'ai',targetIdx);
+                    renderDuelField();
+                    setTimeout(_pvpEmitStateSync,120);
+                    if(duelState.player.lp<=0) endDuel('ai','lp');
+                    if(duelState.ai.lp<=0) endDuel('player','lp');
+                }
+                return;
+            }
+            // Legacy fallback
             if (type === 'attack') { _pvpResolveAttack(action.attackerIdx, action.targetIdx); return; }
             if (type === 'directAttack') { _pvpDirectAttack(action.attackerIdx); return; }
             if (type === 'endTurn') { _pvpOpponentEndTurn(); return; }
@@ -7426,8 +7492,11 @@ function resetGame() {
             const attackerIdx=duelState.selectedZone.idx;
             duelState.selectedZone=null;
             if (mpState.inPvP && socket) {
-                socket.emit('pvpAction', { type:'attack', attackerIdx, targetIdx });
-                setTimeout(_pvpEmitStateSync, 120);
+                mpState.pendingAttack={type:'attack',attackerIdx,targetIdx};
+                socket.emit('pvpAction', { type:'attackDeclare', attackerIdx, targetIdx });
+                showToast('Attack declared — awaiting opponent response…','info');
+                renderDuelField();
+                return;
             }
             resolveAttack('player',attackerIdx,'ai',targetIdx);
             renderDuelField();
@@ -7437,8 +7506,12 @@ function resetGame() {
             if (!duelState.selectedZone) return;
             const attackerIdx=duelState.selectedZone.idx;
             if (mpState.inPvP && socket) {
-                socket.emit('pvpAction', { type:'directAttack', attackerIdx });
-                setTimeout(_pvpEmitStateSync, 120);
+                mpState.pendingAttack={type:'directAttack',attackerIdx};
+                socket.emit('pvpAction', { type:'directDeclare', attackerIdx });
+                showToast('Direct attack declared — awaiting opponent response…','info');
+                duelState.selectedZone=null;
+                renderDuelField();
+                return;
             }
             const attSlot=duelState.player.monsterZones[attackerIdx];
             const attCard=getCardById(attSlot.id);
@@ -7636,7 +7709,7 @@ function resetGame() {
                     const plOwn=owner==='player';
                     return `<div style="width:54px;height:76px;border-radius:5px;border:2px solid ${isTarget?'#ef4444':plOwn?_slv.border:'#1e3a4a'};background:#040e18;${rot}position:relative;overflow:hidden;cursor:${isTarget||(canOpenMenu&&plOwn)?'pointer':'default'};box-shadow:${plOwn?`0 0 8px ${_slv.border}55`:''}"
                          ${isTarget?`onclick="duelSelectAttackTarget(${idx})"`:canOpenMenu&&plOwn?`onclick="showMonsterMenu('player',${idx})"`:''} onmouseenter="${plOwn?`showFieldCardPreview(${slot.id},event)`:'showFaceDownBack(event)'}" onmouseleave="hideCardPreview()">
-                        <div style="position:absolute;inset:0;border-radius:4px;overflow:hidden;pointer-events:none">${plOwn?_slvSVG:_defSlvSVG}</div>
+                        <div style="position:absolute;inset:0;border-radius:4px;overflow:hidden;pointer-events:none">${plOwn?_slvSVG:_oppSlvSVG}</div>
                         ${isTarget?'<div style="position:absolute;inset:0;border:2px solid #ef4444;border-radius:4px;pointer-events:none"></div>':''}
                     </div>`;
                 }
@@ -7669,7 +7742,7 @@ function resetGame() {
                 return `<div style="width:54px;height:76px;border-radius:5px;border:2px solid ${canActivateTrap?'#7c3aed':isAiFaceDown?'#1e3a4a':'#166534'};background:#040e18;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;cursor:${canActivateTrap?'pointer':'default'};box-shadow:${canActivateTrap?'0 0 8px rgba(124,58,237,0.5)':'none'}"
                      onmouseenter="${hoverFn}" onmouseleave="hideCardPreview()" ${canActivateTrap?`onclick="activatePlayerTrap(${idx})"`:''} title="${canActivateTrap?'Click to activate trap':isAiFaceDown?'Face-down card':card.name}">
                     ${slot.faceDown
-                        ?`<div style="position:absolute;inset:0;border-radius:4px;overflow:hidden;pointer-events:none">${owner==='player'?_slvSVG:_defSlvSVG}</div>
+                        ?`<div style="position:absolute;inset:0;border-radius:4px;overflow:hidden;pointer-events:none">${owner==='player'?_slvSVG:_oppSlvSVG}</div>
                           ${canActivateTrap?'<div style="position:absolute;bottom:2px;left:0;right:0;text-align:center"><span style="font-size:5px;font-family:monospace;color:#c4b5fd;background:rgba(0,0,0,0.75);padding:0 3px;border-radius:1px">TRAP</span></div>':''}`
                         :`<div style="transform:scale(0.37);margin:-18px;pointer-events:none">${card.artIcon||''}</div><span style="font-size:6px;font-family:monospace;color:#e5e7eb;text-align:center;padding:0 2px">${card.name.substring(0,9)}</span>`
                     }
