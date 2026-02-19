@@ -3297,6 +3297,11 @@ function resetGame() {
         }
 
         function _showIncomingRequest(data) {
+            // If this player is already in any duel, silently decline so their screen isn't interrupted
+            if (duelState || mpState.inPvP) {
+                if (socket) socket.emit('respondReq', false);
+                return;
+            }
             let el = document.getElementById('incoming-req'); if (el) el.remove();
             const dlg = document.createElement('div');
             dlg.id = 'incoming-req';
