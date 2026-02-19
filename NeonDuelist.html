@@ -3231,8 +3231,9 @@ function resetGame() {
             socket.on('reqSent', () => showToast('Duel request sent! Waiting 30s...', 'info'));
             socket.on('reqExpired', () => { mpState.reqPending = false; showToast('Request timed out.', 'error'); });
             socket.on('reqDeclined', () => { mpState.reqPending = false; showToast('Opponent declined.', 'error'); });
-            socket.on('reqFailed', msg => showToast(msg || 'Request failed.', 'error'));
+            socket.on('reqFailed', msg => { mpState.reqPending = false; showToast(msg || 'Request failed.', 'error'); });
             socket.on('pvpStart', data => {
+                mpState.reqPending = false;  // request accepted — clear busy flag
                 mpState.pvpRole = data.role; mpState.oppId = data.opponentId;
                 mpState.oppName = data.name || 'Opponent'; mpState.oppSymbol = data.symbol || '⚡';
                 mpState.oppLevel = data.level || 1; mpState.inPvP = true;
@@ -6298,7 +6299,7 @@ function resetGame() {
         function rpsChoose(playerPick) {
             const options = ['rock','paper','scissors'];
             const aiPick  = options[Math.floor(Math.random() * 3)];
-            const EMOJI   = { rock:'🪨', paper:'🖐', scissors:'✌️' };
+            const EMOJI   = { rock:'✊', paper:'🖐', scissors:'✌️' };
             document.querySelectorAll('.rps-btn').forEach(b => b.disabled = true);
             let resultText, roundWinner = null;
             if (playerPick === aiPick) {
@@ -6444,6 +6445,8 @@ function resetGame() {
         // ── PHASES ───────────────────────────────────────────
         function advancePhasePlayer() {
             if (!duelState || duelState.turnPlayer!=='PLAYER') return;
+            // Block phase change while waiting for opponent's chain response
+            if (mpState.pendingAttack) { showToast('Waiting for opponent to respond…', 'info'); return; }
             const idx = PHASE_ORDER.indexOf(duelState.phase);
             const next = PHASE_ORDER[idx+1];
             if (!next) { endPlayerTurn(); return; }
@@ -7564,9 +7567,12 @@ function resetGame() {
                 socket.emit('pvpEnd', { won: winner !== 'player', reason });
                 mpState.inPvP = false;
                 socket.emit('setBattle', false);
-                // Force re-entry into world on next renderApp so online badge refreshes correctly
-                gameState._mpInWorld = false;
             }
+            // Always reset world presence so renderApp re-emits enterWorld on return,
+            // refreshing markers and the online badge for both PvP and NPC duels.
+            mpState.reqPending = false;
+            mpState.pendingAttack = null;
+            gameState._mpInWorld = false;
             // Remove any floating overlays that live on document.body (not inside root)
             hideCardPreview();
             const _prev = document.getElementById('card-preview-overlay');
