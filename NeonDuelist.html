@@ -3816,7 +3816,7 @@ function resetGame() {
                     </div>
 
                     <div class="absolute bottom-5 right-5 text-gray-500 font-mono text-sm">
-                        Build v1.5 // Save: AUTO
+                        Build v4.21 // Save: AUTO
                     </div>
                 </div>
 
@@ -7038,6 +7038,9 @@ function resetGame() {
             219: [218, 217],    // Abyssal Sovereign:  Abyss Tyrant + Abyss Sorcerer
             228: [227, 226],    // Grid Titan:         Grid Overlord + Grid Commander
             237: [236, 235],    // Aurora Divinity:    Aurora Guardian + Aurora Sage
+            136: ['attr:DARK', 'attr:DARK'],    // Eclipse Dragon:     2 DARK monsters
+            143: ['attr:DARK', 'name:Dragon'],  // Dark Matter Drake:  1 DARK monster + 1 Dragon
+            196: ['attr:LIGHT', 'attr:LIGHT'],  // Apex Fusion Dragon: 2 LIGHT monsters
         };
 
         // ── GENERIC PLAYER CHOICE PICKER (returns Promise) ───────────
@@ -7057,6 +7060,16 @@ function resetGame() {
         }
 
         // ── FUSION SUMMON FLOW (used by Polymerization + Fusion Catalyst) ──
+        // Returns true if card `candidateId` satisfies a material requirement `req`.
+        // req can be: a number (exact card ID), "attr:DARK", or "name:Dragon" (name substring, case-insensitive)
+        function _matReqSatisfied(candidateId, req) {
+            if (typeof req === 'number') return candidateId === req;
+            const c = getCardById(candidateId);
+            if (!c) return false;
+            if (req.startsWith('attr:')) return c.attribute === req.slice(5);
+            if (req.startsWith('name:')) return (c.name||'').toLowerCase().includes(req.slice(5).toLowerCase());
+            return false;
+        }
         function canDoFusionSummon(owner, useDeck=false) {
             const side = duelState[owner];
             if (!side.extraDeck.length) return false;
@@ -7067,7 +7080,7 @@ function resetGame() {
                 const mats = FUSION_MATERIALS[fid]; if (!mats) return false;
                 const pool = [...handPool, ...fieldPool, ...deckPool];
                 const needed = [...mats];
-                for (const m of needed) { const i = pool.indexOf(m); if (i === -1) return false; pool.splice(i, 1); }
+                for (const m of needed) { const i = pool.findIndex(pid => _matReqSatisfied(pid, m)); if (i === -1) return false; pool.splice(i, 1); }
                 return true;
             });
         }
@@ -7082,7 +7095,7 @@ function resetGame() {
                 const mats=FUSION_MATERIALS[fid]; if(!mats) return false;
                 const pool=[...handPool,...fieldPool,...deckPool].map(x=>x.id);
                 const needed=[...mats];
-                for(const m of needed){ const i=pool.indexOf(m); if(i===-1) return false; pool.splice(i,1); }
+                for(const m of needed){ const i=pool.findIndex(pid=>_matReqSatisfied(pid,m)); if(i===-1) return false; pool.splice(i,1); }
                 return true;
             });
             if(!validFusions.length){ showToast(`${spellName}: Can't Fusion Summon — missing required materials!`,'error'); return; }
@@ -7108,12 +7121,13 @@ function resetGame() {
             const chosenMats=[];
             for(let i=0;i<mats.length;i++){
                 const needed=mats[i];
-                const options=allPool.filter((x,xi)=>x.id===needed&&!used.includes(xi));
-                if(!options.length){ showToast(`${spellName}: Can't find ${getCardById(needed).name}!`,'error'); return; }
+                const options=allPool.filter((x,xi)=>_matReqSatisfied(x.id,needed)&&!used.includes(xi));
+                const matLabel=typeof needed==='number'?(getCardById(needed)||{name:'?'}).name:needed;
+                if(!options.length){ showToast(`${spellName}: Can't find material — ${matLabel}!`,'error'); return; }
                 let chosen;
                 if(options.length===1){ chosen=options[0]; }
                 else {
-                    chosen=await pickDuelChoice(`Material ${i+1}/${mats.length}: ${getCardById(needed).name}`, options, x=>x.label);
+                    chosen=await pickDuelChoice(`Material ${i+1}/${mats.length}: ${matLabel}`, options, x=>x.label);
                     if(chosen===null){ logDuel(`${spellName}: Fusion cancelled.`); return; }
                 }
                 used.push(allPool.indexOf(chosen));
@@ -9003,16 +9017,26 @@ function resetGame() {
             function sfxLose() { [392,349,294,261,220].forEach((f,i)=>tone(f,'sine',0.22*i,0.55,0.22)); }
             function sfxWheelSpin() {
                 boot(); resume();
-                for (let i = 0; i < 65; i++) {
-                    const ratio = i / 65, speed = ratio < 0.4 ? ratio / 0.4 : 1;
-                    const delay = i * (28 + speed * 115);
-                    if (delay > 4900) break;
-                    setTimeout(() => { noise(0,0.022,0.22,6000); tone(750+Math.random()*500,'sine',0,0.022,0.07); }, delay);
+                // Geometric spacing: each gap is `rate` × the previous one, so the wheel
+                // only ever decelerates — no speed-up after the slowdown.
+                const N = 28, minGap = 40, maxGap = 540;
+                const rate = Math.pow(maxGap / minGap, 1 / (N - 1));
+                let t = 0;
+                for (let i = 0; i < N; i++) {
+                    setTimeout(() => { noise(0,0.022,0.22,6000); tone(750+Math.random()*500,'sine',0,0.022,0.07); }, Math.round(t));
+                    t += minGap * Math.pow(rate, i);
                 }
             }
             function sfxWheelResult(good) {
                 if (good) [523,659,784,1047].forEach((f,i) => tone(f,'sine',i*0.09,0.42,0.22));
                 else      { tone(300,'sine',0,0.42,0.22); tone(210,'sine',0.18,0.55,0.22); }
+            }
+            function sfxUIClick() {
+                if (!enabled) return;
+                boot(); resume();
+                // Crisp two-tone "tock" — high blip then quick pitch drop
+                tone(1100,'sine',0,0.12,0.020);
+                tone(820,'sine',0.014,0.07,0.020);
             }
             let scratchBusy = false;
             function sfxScratch() {
@@ -9189,7 +9213,7 @@ function resetGame() {
                 lpDamage: sfxLPDamage, lpGain: sfxLPGain,
                 packOpen: sfxPackOpen, packCard: sfxPackCard,
                 win: sfxWin, lose: sfxLose,
-                wheelSpin: sfxWheelSpin, wheelResult: sfxWheelResult,
+                wheelSpin: sfxWheelSpin, wheelResult: sfxWheelResult, uiClick: sfxUIClick,
                 scratch: sfxScratch, scratchReveal: sfxScratchReveal,
                 slotSpin: sfxSlotSpin, slotCol: sfxSlotCol, slotWin: sfxSlotWin,
                 setEnabled(v) { enabled = v; if (!v) stopBGM(0.3); },
@@ -9219,6 +9243,16 @@ function resetGame() {
             };
             document.body.appendChild(btn);
         })();
+
+        // ── Global UI click sound ──────────────────────────────────────────────
+        // Fires on any button or interactive card element except the sound-toggle itself.
+        document.addEventListener('click', e => {
+            const t = e.target;
+            if (t.closest('#snd-toggle')) return;
+            if (t.closest('button, .card-container, .cursor-pointer, [role="button"]')) {
+                SoundEngine.uiClick();
+            }
+        }, true);
 
         // --- INIT ---
         renderApp();
