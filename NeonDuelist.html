@@ -3196,6 +3196,11 @@ function resetGame() {
             onlinePlayers: [], reqPending: false,
         };
 
+        function _mpResolveEmoji(symbolId) {
+            const entry = (typeof PLAYER_ICONS !== 'undefined') ? PLAYER_ICONS.find(i => i.id === symbolId) : null;
+            return entry ? entry.emoji : (symbolId || '⚡');
+        }
+
         function mpConnect() {
             if (socket) return;
             socket = io(SERVER_URL, { transports: ['websocket', 'polling'] });
@@ -3203,9 +3208,15 @@ function resetGame() {
                 mpState.connected = true;
                 socket.emit('register', {
                     name: gameState.duelistName || 'Unnamed Duelist',
-                    symbol: gameState.equippedSymbol || '⚡',
+                    symbol: _mpResolveEmoji(gameState.equippedSymbol),
                     level: gameState.level || 1
                 });
+                // Also enter world immediately on connect/reconnect if already on duel map
+                if (gameState.view === 'DUEL') {
+                    if (!gameState._mpPos) gameState._mpPos = { x: 10 + Math.random() * 80, y: 10 + Math.random() * 80 };
+                    gameState._mpInWorld = true;
+                    socket.emit('enterWorld', gameState._mpPos);
+                }
             });
             socket.on('disconnect', () => { mpState.connected = false; });
             socket.on('worldUpdate', players => {
@@ -3237,23 +3248,28 @@ function resetGame() {
             socket.on('oppDisconnected', () => showToast('Opponent disconnected! You win in 20s if they don\'t return.', 'error'));
         }
 
+        window._mpPlayerCache = window._mpPlayerCache || {};
+
         function _refreshMpMarkers() {
             const cont = document.getElementById('mp-markers');
             if (!cont) return;
+            window._mpPlayerCache = {};
             cont.innerHTML = mpState.onlinePlayers.map(p => {
                 if (p.inBattle) return '';
+                window._mpPlayerCache[p.id] = p;
                 const x = p.pos?.x || 50, y = p.pos?.y || 50;
-                return `<div class="duelist-marker" style="left:${x}%;top:${y}%;" onclick="_showChallenge(${JSON.stringify(JSON.stringify(p))})">
+                return `<div class="duelist-marker" style="left:${x}%;top:${y}%;pointer-events:auto;" onclick="_showChallenge('${p.id}')">
                     <div class="relative">
                         <div class="absolute inset-0 rounded-full bg-purple-500 opacity-40 duelist-ping"></div>
                         <div class="relative z-10 w-8 h-8 rounded-full bg-purple-900 border-2 border-purple-400 flex items-center justify-center text-sm shadow-lg" title="${p.name} Lv.${p.level}">${p.symbol || '⚡'}</div>
                     </div>
+                    <div class="text-[9px] text-purple-300 font-mono text-center mt-1 leading-none" style="pointer-events:none;text-shadow:0 0 4px #000">${p.name}</div>
                 </div>`;
             }).join('');
         }
 
-        function _showChallenge(pJson) {
-            const p = typeof pJson === 'string' ? JSON.parse(pJson) : pJson;
+        function _showChallenge(pid) {
+            const p = window._mpPlayerCache[pid] || { id: pid, name: 'Unknown', symbol: '⚡', level: '?' };
             if (mpState.inPvP || mpState.reqPending) { showToast('You are busy.', 'error'); return; }
             let ex = document.getElementById('challenge-popup'); if (ex) ex.remove();
             const dlg = document.createElement('div');
