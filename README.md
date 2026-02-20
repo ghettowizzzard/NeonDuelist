@@ -1,5 +1,5 @@
 # NeonDuelist
-A dueling game based upon Popular TCG's with a fun and unique twist! Adding Multiplayer Servers into the Game.
+A Multiplayer dueling game based on Popular TCG's!
 
 Setup Instructions:
 
