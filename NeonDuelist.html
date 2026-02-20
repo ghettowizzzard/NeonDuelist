@@ -3857,7 +3857,7 @@ function resetGame() {
                     </div>
 
                     <div class="absolute bottom-5 right-5 text-gray-500 font-mono text-sm">
-                        Build v4.21 // Save: AUTO
+                        Build v4.22 // Save: AUTO
                     </div>
                 </div>
 
@@ -6977,7 +6977,7 @@ function resetGame() {
                         attSide.lp=Math.max(0,attSide.lp-_finalR);
                         _battleWasReflect = true;
                         logDuel(`${defCard.name} DEF(${defDEF}) repels! ${attackerOwner==='player'?'You':'Opp'} take ${_finalR} DMG!${_spR>0?' ('+_spR+' absorbed by Nano Shield!)':''}`);
-                    else logDuel(`${attCard.name} attacks ${defCard.name} in DEF — no damage.`);
+                    } else logDuel(`${attCard.name} attacks ${defCard.name} in DEF — no damage.`);
                 }
             }
             // ── Battle result sounds ──────────────────────────────────────────
