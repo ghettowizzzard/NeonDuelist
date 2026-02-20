@@ -7149,6 +7149,90 @@ function resetGame() {
             renderDuelField();
         }
 
+        // ── Special-Summon-Only helpers ──────────────────────────────────────────
+        async function doSpecialSummon135(zoneIndex) {
+            // Nemesis Titan: SS if 3+ monsters exist in any Graveyard combined
+            const side=duelState.player;
+            const isMon=id=>{const c=getCardById(id);return c&&c.type!=='SPELL'&&c.type!=='TRAP';};
+            const totalGY=side.graveyard.filter(isMon).length+duelState.ai.graveyard.filter(isMon).length;
+            if(totalGY<3){showToast('Nemesis Titan: Need 3+ monsters in any Graveyard combined!','error');return;}
+            const hi=side.hand.indexOf(135);if(hi!==-1)side.hand.splice(hi,1);
+            side.monsterZones[zoneIndex]={id:135,position:'ATK',summonedThisTurn:true,faceDown:false};
+            duelState.selectedHandCard=null;
+            SoundEngine.summon();
+            logDuel('Nemesis Titan: Special Summoned (3+ monsters in Graveyard)!');
+            triggerOnSummonEffect(135,'player',zoneIndex);
+            renderDuelField();
+        }
+
+        async function doSpecialSummon140(zoneIndex) {
+            // Omega Prime: banish 3 LIGHT monsters from own GY
+            const side=duelState.player;
+            const lightGY=side.graveyard.filter(id=>{const c=getCardById(id);return c&&c.attribute==='LIGHT';});
+            if(lightGY.length<3){showToast('Omega Prime: Need 3 LIGHT monsters in your Graveyard to banish!','error');return;}
+            const chosen=[];
+            for(let i=0;i<3;i++){
+                const pool=lightGY.filter(id=>!chosen.includes(id));
+                const pick=pool.length===1?pool[0]:await pickDuelChoice(`Banish LIGHT ${i+1}/3`,pool,id=>{const c=getCardById(id);return c.name;},false);
+                if(pick===null){duelState.selectedHandCard=null;renderDuelField();return;}
+                chosen.push(pick);
+            }
+            chosen.forEach(id=>{const gi=side.graveyard.indexOf(id);if(gi!==-1)side.graveyard.splice(gi,1);side.banished.push(id);});
+            const hi=side.hand.indexOf(140);if(hi!==-1)side.hand.splice(hi,1);
+            side.monsterZones[zoneIndex]={id:140,position:'ATK',summonedThisTurn:true,faceDown:false};
+            duelState.selectedHandCard=null;
+            SoundEngine.summon();
+            logDuel('Omega Prime: Banished 3 LIGHT from GY — Special Summoned!');
+            triggerOnSummonEffect(140,'player',zoneIndex);
+            renderDuelField();
+        }
+
+        async function doSpecialSummon145(zoneIndex) {
+            // Nemesis Eclipse Dragon: banish 2 DARK monsters from own hand
+            const side=duelState.player;
+            const darkHand=side.hand.filter(id=>{const c=getCardById(id);return c&&c.attribute==='DARK'&&id!==145;});
+            if(darkHand.length<2){showToast('Nemesis Eclipse Dragon: Need 2 other DARK monsters in hand to banish!','error');return;}
+            const chosen=[];
+            for(let i=0;i<2;i++){
+                const pool=darkHand.filter(id=>!chosen.includes(id));
+                const pick=pool.length===1?pool[0]:await pickDuelChoice(`Banish DARK ${i+1}/2 from Hand`,pool,id=>{const c=getCardById(id);return c.name;},false);
+                if(pick===null){duelState.selectedHandCard=null;renderDuelField();return;}
+                chosen.push(pick);
+            }
+            chosen.forEach(id=>{const hi2=side.hand.indexOf(id);if(hi2!==-1)side.hand.splice(hi2,1);side.banished.push(id);});
+            const hi=side.hand.indexOf(145);if(hi!==-1)side.hand.splice(hi,1);
+            side.monsterZones[zoneIndex]={id:145,position:'ATK',summonedThisTurn:true,faceDown:false};
+            duelState.selectedHandCard=null;
+            SoundEngine.summon();
+            logDuel('Nemesis Eclipse Dragon: Banished 2 DARK from hand — Special Summoned!');
+            triggerOnSummonEffect(145,'player',zoneIndex);
+            renderDuelField();
+        }
+
+        async function doSpecialSummon155(zoneIndex) {
+            // Omega Genesis Leviathan: discard 2 cards from hand (after revealing all)
+            const side=duelState.player;
+            const otherHand=side.hand.filter(id=>id!==155);
+            if(otherHand.length<2){showToast('Omega Genesis Leviathan: Need 2 other cards in hand to discard!','error');return;}
+            showToast('Revealing your hand to activate Omega Genesis Leviathan!','info');
+            const chosen=[];
+            for(let i=0;i<2;i++){
+                const pool=otherHand.filter(id=>!chosen.includes(id));
+                const pick=pool.length===1?pool[0]:await pickDuelChoice(`Discard ${i+1}/2 from Hand`,pool,id=>{const c=getCardById(id);return `${c.name} [${c.type}]`;},false);
+                if(pick===null){duelState.selectedHandCard=null;renderDuelField();return;}
+                chosen.push(pick);
+            }
+            chosen.forEach(id=>{const hi2=side.hand.indexOf(id);if(hi2!==-1)side.hand.splice(hi2,1);side.graveyard.push(id);});
+            const hi=side.hand.indexOf(155);if(hi!==-1)side.hand.splice(hi,1);
+            side.monsterZones[zoneIndex]={id:155,position:'ATK',summonedThisTurn:true,faceDown:false};
+            duelState.selectedHandCard=null;
+            SoundEngine.summon();
+            logDuel('Omega Genesis Leviathan: Discarded 2 cards from hand — Special Summoned!');
+            triggerOnSummonEffect(155,'player',zoneIndex);
+            renderDuelField();
+        }
+        // ─────────────────────────────────────────────────────────────────────────
+
         async function duelPlaceMonster(zoneIndex) {
             if (duelState.turnPlayer!=='PLAYER'||!['MAIN1','MAIN2'].includes(duelState.phase)) { showToast('Can only summon in Main Phase!','error'); return; }
             if (duelState.selectedHandCard===null) return;
@@ -7157,11 +7241,35 @@ function resetGame() {
             if (!card||card.type==='SPELL'||card.type==='TRAP') { showToast('Select a Monster card!','error'); return; }
             if (card.type==='FUSION') { showToast('Fusion needs Polymerization!','error'); return; }
             if (duelState.player.monsterZones[zoneIndex]!==null) { showToast('Zone is occupied!','error'); return; }
+            // ── Route Special-Summon-Only cards before normalSummonUsed check ──
+            if (handCardId===135) { await doSpecialSummon135(zoneIndex); return; }
+            if (handCardId===140) { await doSpecialSummon140(zoneIndex); return; }
+            if (handCardId===145) { await doSpecialSummon145(zoneIndex); return; }
+            if (handCardId===155) { await doSpecialSummon155(zoneIndex); return; }
+            // ─────────────────────────────────────────────────────────────────
             if (duelState.player.normalSummonUsed) { showToast('Already used Normal Summon!','error'); return; }
             const lvl=card.level||1, occupied=duelState.player.monsterZones.filter(Boolean).length;
-            if (lvl>=7&&occupied<2) { showToast('Need 2 tributes!','error'); return; }
-            if (lvl>=5&&lvl<7&&occupied<1) { showToast('Need 1 tribute!','error'); return; }
-            if (lvl>=7) {
+            // 3-tribute monsters (153: "Requires 3 DARK as Tribute", 159: "Requires 3 Tributes")
+            const needs3Trib=(handCardId===153||handCardId===159);
+            if (needs3Trib&&occupied<3) { showToast('Need 3 tributes!','error'); return; }
+            if (!needs3Trib&&lvl>=7&&occupied<2) { showToast('Need 2 tributes!','error'); return; }
+            if (!needs3Trib&&lvl>=5&&lvl<7&&occupied<1) { showToast('Need 1 tribute!','error'); return; }
+            if (needs3Trib) {
+                const tribOpts=duelState.player.monsterZones.map((s,i)=>s?i:-1).filter(i=>i!==-1);
+                if(tribOpts.length<3){showToast('Need 3 monsters to tribute!','error');return;}
+                const t1=await pickDuelChoice('Tribute 1st monster',tribOpts,i=>{const c=getCardById(duelState.player.monsterZones[i].id);return `${c.name}  ATK:${getEffectiveATK(duelState.player.monsterZones[i])}/DEF:${getEffectiveDEF(duelState.player.monsterZones[i])}`;},false);
+                if(t1===null){duelState.selectedHandCard=null;renderDuelField();return;}
+                const tribOpts2=tribOpts.filter(i=>i!==t1);
+                const t2=await pickDuelChoice('Tribute 2nd monster',tribOpts2,i=>{const c=getCardById(duelState.player.monsterZones[i].id);return `${c.name}  ATK:${getEffectiveATK(duelState.player.monsterZones[i])}/DEF:${getEffectiveDEF(duelState.player.monsterZones[i])}`;},false);
+                if(t2===null){duelState.selectedHandCard=null;renderDuelField();return;}
+                const tribOpts3=tribOpts2.filter(i=>i!==t2);
+                const t3=await pickDuelChoice('Tribute 3rd monster',tribOpts3,i=>{const c=getCardById(duelState.player.monsterZones[i].id);return `${c.name}  ATK:${getEffectiveATK(duelState.player.monsterZones[i])}/DEF:${getEffectiveDEF(duelState.player.monsterZones[i])}`;},false);
+                if(t3===null){duelState.selectedHandCard=null;renderDuelField();return;}
+                duelState.player.graveyard.push(duelState.player.monsterZones[t1].id); duelState.player.monsterZones[t1]=null;
+                duelState.player.graveyard.push(duelState.player.monsterZones[t2].id); duelState.player.monsterZones[t2]=null;
+                duelState.player.graveyard.push(duelState.player.monsterZones[t3].id); duelState.player.monsterZones[t3]=null;
+                logDuel(`Tribute 3 monsters to summon ${getCardById(handCardId).name}!`);
+            } else if (lvl>=7) {
                 const tribOpts=duelState.player.monsterZones.map((s,i)=>s?i:-1).filter(i=>i!==-1);
                 if(tribOpts.length<2){showToast('Need 2 monsters to tribute!','error');return;}
                 const t1=await pickDuelChoice('Tribute 1st monster',tribOpts,i=>{const c=getCardById(duelState.player.monsterZones[i].id);return `${c.name}  ATK:${getEffectiveATK(duelState.player.monsterZones[i])}/DEF:${getEffectiveDEF(duelState.player.monsterZones[i])}`;},false);
@@ -7702,9 +7810,9 @@ function resetGame() {
             function oppSmallCardBack() {
                 return `<div style="width:38px;height:54px;border-radius:4px;overflow:hidden;border:1.5px solid ${_oppSlv.border};box-shadow:0 0 4px ${_oppSlv.border}44;flex-shrink:0">${_oppSlvSVG}</div>`;
             }
-            function deckZone(count, label) {
+            function deckZone(count, label, isOpp=false) {
                 return `<div style="width:54px;height:76px;border-radius:5px;border:2px solid #134e4a;background:#040e18;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
-                    ${count>0?smallCardBack():'<span style="color:#374151;font-size:8px;font-family:monospace">EMPTY</span>'}
+                    ${count>0?(isOpp?oppSmallCardBack():smallCardBack()):'<span style="color:#374151;font-size:8px;font-family:monospace">EMPTY</span>'}
                     <span style="color:#0e7490;font-size:7px;font-family:monospace">${label}:${count}</span>
                 </div>`;
             }
@@ -7841,7 +7949,7 @@ function resetGame() {
 
                         <!-- AI Extra Deck -->
                         <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
-                            ${deckZone(D.ai.extraDeck.length,'EX')}
+                            ${deckZone(D.ai.extraDeck.length,'EX',true)}
                         </div>
 
                         <!-- Center rows -->
@@ -7863,7 +7971,7 @@ function resetGame() {
 
                         <!-- AI Deck / GY / Ban -->
                         <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
-                            ${deckZone(D.ai.deck.length,'DK')}
+                            ${deckZone(D.ai.deck.length,'DK',true)}
                             ${gyZone(D.ai.graveyard,'GY')}
                             ${banZone(D.ai.banished)}
                         </div>
@@ -7924,7 +8032,7 @@ function resetGame() {
         function showFieldCardPreview(cardId, event) { showCardPreview(cardId, event); }
 
         // ── MONSTER MENU ──────────────────────────────────────
-        const MONSTER_ACTIVATABLE=[10,15,16,17,18,86,89,92,93,97,99,100,166,175,177,178,188,189,199,207,209,217,226,234,235,236];
+        const MONSTER_ACTIVATABLE=[10,15,16,17,18,86,89,92,93,97,99,100,135,140,145,155,166,175,177,178,188,189,199,207,209,217,226,234,235,236];
 
         function showMonsterMenu(owner, idx) {
             if (owner!=='player'||!duelState||duelState.turnPlayer!=='PLAYER') return;
@@ -8170,6 +8278,52 @@ function resetGame() {
                         duelState.player.graveyard.push(did189);
                         logDuel(`${card.name}: Draw 1, discard ${getCardById(did189)?.name||'a card'}!`);
                     } else logDuel(`${card.name}: Drew 1 card!`);
+                    slot.effectUsedThisTurn=true; renderDuelField(); break; }
+                case 135: { // Nemesis Titan: destroy 1 monster on the field
+                    const allMs135=[
+                        ...duelState.player.monsterZones.map((s,i)=>s&&i!==idx?{zone:'player',i,label:`Your ${getCardById(s.id).name}  ATK:${getEffectiveATK(s)}`}:null).filter(Boolean),
+                        ...duelState.ai.monsterZones.map((s,i)=>s?{zone:'ai',i,label:`Opp ${getCardById(s.id).name}  ATK:${getEffectiveATK(s)}`}:null).filter(Boolean),
+                    ];
+                    if(!allMs135.length){showToast('No monster to target!','error');return;}
+                    const pick135=allMs135.length===1?allMs135[0]:await pickDuelChoice('Destroy 1 monster',allMs135,x=>x.label,false);
+                    if(!pick135){logDuel(`${card.name}: Cancelled.`);return;}
+                    const tgt135=duelState[pick135.zone].monsterZones[pick135.i];
+                    logDuel(`${card.name}: Destroys ${getCardById(tgt135.id).name}!`);
+                    duelState[pick135.zone].graveyard.push(tgt135.id); duelState[pick135.zone].monsterZones[pick135.i]=null;
+                    slot.effectUsedThisTurn=true; renderDuelField(); break; }
+                case 140: { // Omega Prime: add 1 banished card to hand
+                    if(!duelState.player.banished.length){showToast('No banished cards!','error');return;}
+                    const pick140=duelState.player.banished.length===1?duelState.player.banished[0]:await pickDuelChoice('Add which banished card to hand?',duelState.player.banished,id=>{const c=getCardById(id);return `${c.name} [${c.type}]`;},false);
+                    if(pick140===null){logDuel(`${card.name}: Cancelled.`);return;}
+                    duelState.player.banished=duelState.player.banished.filter(id=>id!==pick140);
+                    duelState.player.hand.push(pick140);
+                    logDuel(`${card.name}: ${getCardById(pick140).name} returned from banishment to hand!`);
+                    slot.effectUsedThisTurn=true; renderDuelField(); break; }
+                case 145: { // Nemesis Eclipse Dragon: destroy up to 2 opp cards, 300 damage each
+                    const allTgts145=[
+                        ...duelState.ai.monsterZones.map((s,i)=>s?{zone:'ai',type:'monster',i,label:`Monster: ${getCardById(s.id).name}  ATK:${getEffectiveATK(s)}`}:null).filter(Boolean),
+                        ...duelState.ai.spellTrapZones.map((s,i)=>s?{zone:'ai',type:'st',i,label:`S/T: ${s.faceDown?'Face-down':getCardById(s.id).name}`}:null).filter(Boolean),
+                    ];
+                    if(!allTgts145.length){showToast('No opponent cards to target!','error');return;}
+                    const pick1_145=await pickDuelChoice('Destroy target 1',allTgts145,x=>x.label,false);
+                    if(!pick1_145){logDuel(`${card.name}: Cancelled.`);return;}
+                    const rem145=allTgts145.filter(x=>!(x.zone===pick1_145.zone&&x.type===pick1_145.type&&x.i===pick1_145.i));
+                    let pick2_145=null;
+                    if(rem145.length) pick2_145=await pickDuelChoice('Destroy target 2 (cancel = 1 only)',rem145,x=>x.label,false);
+                    const toDestroy145=[pick1_145];if(pick2_145)toDestroy145.push(pick2_145);
+                    let ct145=0;
+                    toDestroy145.forEach(tgt=>{
+                        if(tgt.type==='monster'){const s=duelState.ai.monsterZones[tgt.i];if(s){logDuel(`${card.name}: Destroys ${getCardById(s.id).name}!`);duelState.ai.graveyard.push(s.id);duelState.ai.monsterZones[tgt.i]=null;ct145++;}}
+                        else{const s=duelState.ai.spellTrapZones[tgt.i];if(s){logDuel(`${card.name}: Destroys ${getCardById(s.id)?.name||'card'}!`);duelState.ai.graveyard.push(s.id);duelState.ai.spellTrapZones[tgt.i]=null;ct145++;}}
+                    });
+                    if(ct145){duelState.ai.lp=Math.max(0,duelState.ai.lp-ct145*300);logDuel(`${card.name}: ${ct145*300} damage! (Opp LP:${duelState.ai.lp})`);}
+                    slot.effectUsedThisTurn=true; renderDuelField(); break; }
+                case 155: { // Omega Genesis Leviathan: destroy all opp monsters, 500 damage each
+                    let ct155act=0;
+                    duelState.ai.monsterZones.forEach((s,i)=>{if(s){logDuel(`${card.name}: Obliterates ${getCardById(s.id).name}!`);duelState.ai.graveyard.push(s.id);duelState.ai.monsterZones[i]=null;ct155act++;}});
+                    if(!ct155act){showToast('No opponent monsters to destroy!','error');return;}
+                    duelState.ai.lp=Math.max(0,duelState.ai.lp-ct155act*500);
+                    logDuel(`${card.name}: ${ct155act} monster(s) obliterated — ${ct155act*500} damage! (Opp LP:${duelState.ai.lp})`);
                     slot.effectUsedThisTurn=true; renderDuelField(); break; }
                 default: logDuel(`${card.name} effect activates!`); break;
             }
